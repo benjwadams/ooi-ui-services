@@ -5,10 +5,14 @@ uframe endpoints
 '''
 __author__ = 'Andy Bird'
 #base
-from flask import jsonify, request, current_app, url_for, Flask, make_response, url_for
+from flask import (jsonify, request, current_app, url_for, Flask, make_response,
+                   url_for, Response)
 from ooiservices.app import db, cache, celery
 from ooiservices.app.uframe import uframe as api
-from ooiservices.app.models import Array, PlatformDeployment, InstrumentDeployment,Stream, StreamParameter, Organization, Instrumentname,Annotation
+from ooiservices.app.models import (Array, PlatformDeployment,
+                                    InstrumentDeployment, Stream,
+                                    StreamParameter, Organization,
+                                    Instrumentname, Annotation)
 from ooiservices.app.main.authentication import auth,verify_auth
 from ooiservices.app.main.errors import internal_server_error
 from urllib import urlencode
@@ -18,6 +22,8 @@ from ooiservices.app.uframe.plotting import generate_plot
 from datetime import datetime
 from dateutil.parser import parse as parse_date
 import requests
+# primarily for encoding coordinates to GeoJSON
+from shapely.geometry import LineString, mapping
 #additional ones
 import json
 import datetime
@@ -174,6 +180,24 @@ def get_uframe_platforms(mooring):
     except:
         return internal_server_error('uframe connection cannot be made.')
 
+@api.route('/get_glider_track/<string:ref>')
+def get_uframe_glider_track(ref):
+    '''
+    Given a reference designator, returns a GeoJSON LineString for glider
+    tracks
+    '''
+    # we will always want the telemetered data, and the engineering stream
+    # data should reside in the same place
+    res = get_json('telemetered_glider_eng_telemetered', ref)
+    if res.status_code != 200:
+        return res.data, res.status_code, dict(res.headers)
+    res_arr = json.loads(res.data)['data']
+    # load the JSON into a shapely LineString.
+    track = LineString([(pt['m_gps_lon'], pt['m_gps_lat']) for pt in res_arr if
+                        pt['m_gps_lon'] != 'NaN' and pt['m_gps_lat'] != 'NaN'])
+    # serialize the Python object of containing tracks to GeoJSON
+    return Response(json.dumps(mapping(track)), mimetype='application/json')
+
 @cache.memoize(timeout=3600)
 def get_uframe_instruments(mooring, platform):
     '''
@@ -239,7 +263,7 @@ def get_uframe_stream_metadata(mooring, platform, instrument, stream):
         return response
     except:
         return internal_server_error('uframe connection cannot be made.')
-    
+
 
 @cache.memoize(timeout=3600)
 def get_uframe_stream_contents(mooring, platform, instrument, stream_type, stream):
